@@ -1,0 +1,7 @@
+{
+  "name": "LingoFlow - AI English Tutor",
+  "description": "A gamified English learning assistant using voice interaction, AI feedback, and XP tracking.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
