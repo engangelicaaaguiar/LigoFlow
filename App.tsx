@@ -12,6 +12,7 @@ import { LandingPage } from './components/LandingPage';
 import { Trophy, Lock, ChevronLeft, AlertTriangle, Mail, Key, Loader2, ArrowRight, Settings, User, LayoutDashboard, ChevronRight, BarChart3, Home } from 'lucide-react';
 import { supabase, signInWithEmail, signUpWithEmail } from './services/supabase';
 import { useConversation } from './hooks/useConversation';
+import { Analytics } from '@vercel/analytics/react';
 
 const App: React.FC = () => {
   const store = useAppStore();
@@ -366,6 +367,7 @@ const App: React.FC = () => {
       {showSettings && <VoiceSettings onClose={() => setShowSettings(false)} />}
       {showProfile && <ProfileSettings onClose={() => setShowProfile(false)} />}
       {showProgress && <ProgressDashboard onClose={() => setShowProgress(false)} />}
+      <Analytics />
     </div>
   );
 };
