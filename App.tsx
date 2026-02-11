@@ -12,6 +12,7 @@ import { LandingPage } from './components/LandingPage';
 import { Trophy, Lock, ChevronLeft, AlertTriangle, Mail, Key, Loader2, ArrowRight, Settings, User, LayoutDashboard, ChevronRight, BarChart3 } from 'lucide-react';
 import { supabase, signInWithEmail, signUpWithEmail } from './services/supabase';
 import { useConversation } from './hooks/useConversation';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 const App: React.FC = () => {
   const store = useAppStore();
@@ -146,16 +147,19 @@ const App: React.FC = () => {
   // 1. Landing View
   if (view === 'landing') {
     return (
-      <LandingPage 
-        onGetStarted={() => {
-           setAuthMode('signup');
-           setView('auth');
-        }}
-        onLogin={() => {
-           setAuthMode('signin');
-           setView('auth');
-        }}
-      />
+      <>
+        <LandingPage 
+          onGetStarted={() => {
+             setAuthMode('signup');
+             setView('auth');
+          }}
+          onLogin={() => {
+             setAuthMode('signin');
+             setView('auth');
+          }}
+        />
+        <SpeedInsights />
+      </>
     );
   }
 
@@ -212,6 +216,7 @@ const App: React.FC = () => {
             </form>
           </div>
         </div>
+        <SpeedInsights />
       </div>
     );
   }
@@ -227,6 +232,7 @@ const App: React.FC = () => {
            <p className="text-gray-600 mb-6">See previous instructions to fix API Key.</p>
            <button onClick={() => window.location.reload()} className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl">Refresh</button>
         </div>
+        <SpeedInsights />
       </div>
     );
   }
@@ -271,6 +277,7 @@ const App: React.FC = () => {
            {showProfile && <ProfileSettings onClose={() => setShowProfile(false)} />}
            {showProgress && <ProgressDashboard onClose={() => setShowProgress(false)} />}
         </div>
+        <SpeedInsights />
       </div>
     );
   }
@@ -357,6 +364,7 @@ const App: React.FC = () => {
       {showSettings && <VoiceSettings onClose={() => setShowSettings(false)} />}
       {showProfile && <ProfileSettings onClose={() => setShowProfile(false)} />}
       {showProgress && <ProgressDashboard onClose={() => setShowProgress(false)} />}
+      <SpeedInsights />
     </div>
   );
 };
