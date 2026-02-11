@@ -1,274 +1,362 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { useAppStore } from './store';
-import { sendMessageToGemini } from './services/gemini';
-import { speakText } from './services/tts';
-import { GameStatus } from './types';
+import { AppStatus } from './types';
 import { ChatBubble } from './components/ChatBubble';
-import { MicrophoneButton } from './components/MicrophoneButton';
 import { ProgressBar } from './components/ProgressBar';
-import { Trophy, Zap, Crown, Menu } from 'lucide-react';
-
-// --- Type definitions for Web Speech API ---
-interface SpeechRecognitionEvent extends Event {
-  results: {
-    [index: number]: {
-      [index: number]: {
-        transcript: string;
-      };
-    };
-  };
-}
-
-interface SpeechRecognitionError extends Event {
-  error: string;
-  message?: string;
-}
-
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onstart: ((this: SpeechRecognition, ev: Event) => any) | null;
-  onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null;
-  onerror: ((this: SpeechRecognition, ev: SpeechRecognitionError) => any) | null;
-  onend: ((this: SpeechRecognition, ev: Event) => any) | null;
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition?: { new(): SpeechRecognition };
-    webkitSpeechRecognition?: { new(): SpeechRecognition };
-  }
-}
-// --------------------------------
-
-const DAILY_LIMIT_FREE = 5;
+import { VoiceVisualizer } from './components/VoiceVisualizer';
+import { VoiceSettings } from './components/VoiceSettings';
+import { ProfileSettings } from './components/ProfileSettings';
+import { ProgressDashboard } from './components/ProgressDashboard';
+import { LandingPage } from './components/LandingPage';
+import { Trophy, Lock, ChevronLeft, AlertTriangle, Mail, Key, Loader2, ArrowRight, Settings, User, LayoutDashboard, ChevronRight, BarChart3 } from 'lucide-react';
+import { supabase, signInWithEmail, signUpWithEmail } from './services/supabase';
+import { useConversation } from './hooks/useConversation';
 
 const App: React.FC = () => {
-  const { messages, user, status, addMessage, updateUserXP, incrementDailyMessages, setStatus, togglePro } = useAppStore();
+  const store = useAppStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
+  
+  // Router State: 'landing' | 'auth' | 'app'
+  const [view, setView] = useState<'landing' | 'auth' | 'app'>('landing');
 
-  // Initialize Speech Recognition
+  // Login State
+  const [email, setEmail] = useState('angel.s.aguiar@gmail.com');
+  const [password, setPassword] = useState('Thor@123');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  
+  // UI State
+  const [showSettings, setShowSettings] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
+
+  // Use the new Robust Controller
+  const { 
+    status: conversationStatus, 
+    transcript, 
+    toggleSession, 
+    speakAndListen,
+    isSessionActive,
+    error: conversationError
+  } = useConversation();
+  
+  // Init User & Auth
   useEffect(() => {
-    if (typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const rec = new SpeechRecognition();
-        rec.continuous = false;
-        rec.interimResults = false;
-        rec.lang = 'en-US';
-        
-        rec.onstart = () => setStatus(GameStatus.LISTENING);
-        
-        rec.onresult = (event: SpeechRecognitionEvent) => {
-          const transcript = event.results[0][0].transcript;
-          handleUserMessage(transcript);
-        };
-
-        rec.onerror = (event: SpeechRecognitionError) => {
-          console.error("Speech Error", event);
-          setStatus(GameStatus.IDLE);
-        };
-
-        rec.onend = () => {
-          // If we didn't get a result and are still "listening", reset to idle.
-          // We use a functional update to ensure we have the latest state.
-          setStatus((prev) => prev === GameStatus.LISTENING ? GameStatus.IDLE : prev);
-        };
-
-        setRecognition(rec);
+    const init = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error && error.message.includes('API key')) {
+        store.setStatus(AppStatus.CONFIG_ERROR);
+        return;
       }
-    } else {
-      console.warn("Web Speech API is not supported in this browser.");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // Auto-scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+      if (session) {
+        store.initUser(session.user.id);
+        setView('app'); // Automatically go to app if logged in
+      } else {
+        // If no session, stay on landing (default)
+        // If we want to persist "landing seen" state, we could use localStorage here
+      }
+    };
 
-  const handleUserMessage = async (text: string) => {
-    if (!text.trim()) {
-      setStatus(GameStatus.IDLE);
-      return;
-    }
-
-    // Check Limits
-    if (!user.isPro && user.dailyMessages >= DAILY_LIMIT_FREE) {
-      alert("Daily limit reached! Upgrade to Pro for unlimited practice.");
-      setStatus(GameStatus.IDLE);
-      return;
-    }
-
-    setStatus(GameStatus.PROCESSING);
-
-    // Add User Message
-    addMessage({
-      id: Date.now().toString(),
-      role: 'user',
-      text: text,
-      timestamp: Date.now()
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        store.initUser(session.user.id);
+        setView('app');
+      } else if (event === 'SIGNED_OUT') {
+        setView('landing'); // Go back to landing on sign out
+        store.setStatus(AppStatus.LOGIN);
+      }
     });
 
+    init();
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  // Scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [store.messages, conversationStatus]);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError(null);
     try {
-      // Call Gemini
-      const data = await sendMessageToGemini(text);
-
-      // Add Assistant Message
-      addMessage({
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        text: data.reply,
-        correction: data.correction || undefined,
-        xpGained: data.xp,
-        timestamp: Date.now()
-      });
-
-      // Update User Stats
-      updateUserXP(data.xp);
-      incrementDailyMessages();
-
-      // Speak Response
-      setStatus(GameStatus.SPEAKING);
-      speakText(data.reply, () => {
-        setStatus(GameStatus.IDLE);
-      });
-
-    } catch (error) {
-      console.error("Interaction failed", error);
-      setStatus(GameStatus.IDLE);
-    }
-  };
-
-  const startListening = () => {
-    if (recognition && status === GameStatus.IDLE) {
-      try {
-        recognition.start();
-      } catch (e) {
-        console.error("Recognition start failed", e);
-        setStatus(GameStatus.IDLE);
+      let result;
+      if (authMode === 'signin') {
+        result = await signInWithEmail(email, password);
+      } else {
+        result = await signUpWithEmail(email, password);
       }
+      if (result.error) {
+        const isRateLimit = result.error.message.toLowerCase().includes('rate limit');
+        if (!isRateLimit) {
+          setAuthError(result.error.message);
+        } else {
+          if (authMode === 'signup') {
+             const loginResult = await signInWithEmail(email, password);
+             if (loginResult.session) store.initUser(loginResult.session.user.id);
+          }
+        }
+      } else {
+        if (result.session) {
+          store.initUser(result.session.user.id);
+          setView('app');
+        } else if (result.user && !result.session) {
+          const loginResult = await signInWithEmail(email, password);
+          if (loginResult.session) {
+             store.initUser(loginResult.session.user.id);
+             setView('app');
+          } else {
+             setAuthError("Account created. Please try signing in.");
+             setAuthMode('signin');
+          }
+        }
+      }
+    } catch (err) {
+      setAuthError("An unexpected error occurred.");
+    } finally {
+      setAuthLoading(false);
     }
   };
 
-  const remainingMessages = user.isPro ? '∞' : Math.max(0, DAILY_LIMIT_FREE - user.dailyMessages);
+  const handleTopicSelect = async (topic: string) => {
+    const level = store.user?.currentLevel || 'A1';
+    await store.startSession(topic, level);
+    const greeting = `Welcome to your ${level} session about "${topic}". Let's start!`;
+    speakAndListen(greeting);
+  };
+
+  const handleExitSession = () => {
+    // Stop speaking/listening if active
+    if (isSessionActive) {
+      toggleSession();
+    }
+    // Return to Setup Screen (Progress Dashboard)
+    store.setStatus(AppStatus.SETUP);
+  };
+
+  // --- VIEW ROUTING ---
+
+  // 1. Landing View
+  if (view === 'landing') {
+    return (
+      <LandingPage 
+        onGetStarted={() => {
+           setAuthMode('signup');
+           setView('auth');
+        }}
+        onLogin={() => {
+           setAuthMode('signin');
+           setView('auth');
+        }}
+      />
+    );
+  }
+
+  // 2. Auth View (Sign In / Sign Up)
+  if (view === 'auth' || (view === 'app' && store.status === AppStatus.LOGIN)) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-hero p-6 font-sans relative overflow-hidden">
+        {/* Background Decorative Blobs */}
+        <div className="absolute top-0 left-0 w-96 h-96 bg-primary/20 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2"></div>
+        <div className="absolute bottom-0 right-0 w-96 h-96 bg-secondary/20 rounded-full blur-3xl translate-x-1/2 translate-y-1/2"></div>
+        
+        {/* Back Button */}
+        <button 
+           onClick={() => setView('landing')} 
+           className="absolute top-6 left-6 text-neutral-light hover:text-neutral-title font-bold text-sm z-20 flex items-center gap-1"
+        >
+          <ChevronLeft size={20} /> Back
+        </button>
+
+        <div className="w-full max-w-md relative z-10">
+          <div className="text-center mb-10">
+            <div className="w-24 h-24 bg-gradient-to-br from-primary to-secondary rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-glow-green transform rotate-3 hover:rotate-6 transition-transform">
+              <Trophy className="w-12 h-12 text-white" />
+            </div>
+            <h1 className="text-4xl font-extrabold text-neutral-title tracking-tight mb-2">LingoFlow</h1>
+            <p className="text-neutral-body font-medium">Your AI Fluency Coach</p>
+          </div>
+
+          <div className="bg-white/70 backdrop-blur-xl p-8 rounded-[2rem] shadow-glass border border-white/50">
+            <div className="flex gap-2 mb-8 bg-neutral-offWhite/50 p-1.5 rounded-2xl">
+              <button onClick={() => setAuthMode('signin')} className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${authMode === 'signin' ? 'bg-white text-neutral-title shadow-sm' : 'text-neutral-light hover:text-neutral-body'}`}>Sign In</button>
+              <button onClick={() => setAuthMode('signup')} className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${authMode === 'signup' ? 'bg-white text-neutral-title shadow-sm' : 'text-neutral-light hover:text-neutral-body'}`}>Sign Up</button>
+            </div>
+
+            <form onSubmit={handleAuth} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-neutral-light uppercase ml-1">Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-light" size={20} />
+                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-white/60 border border-transparent focus:bg-white focus:border-primary/50 focus:ring-4 focus:ring-primary/10 rounded-2xl outline-none transition-all font-semibold text-neutral-title placeholder:text-neutral-light/50" placeholder="hello@example.com" required />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-neutral-light uppercase ml-1">Password</label>
+                <div className="relative">
+                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-light" size={20} />
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-white/60 border border-transparent focus:bg-white focus:border-primary/50 focus:ring-4 focus:ring-primary/10 rounded-2xl outline-none transition-all font-semibold text-neutral-title placeholder:text-neutral-light/50" placeholder="••••••••" required />
+                </div>
+              </div>
+              {authError && <div className="p-4 bg-red-50 text-red-600 text-sm font-bold rounded-xl flex items-center gap-2 animate-fade-in"><AlertTriangle size={16} />{authError}</div>}
+              <button type="submit" disabled={authLoading} className="w-full bg-cta text-white font-bold py-4 rounded-2xl shadow-glow-green hover:shadow-lg active:scale-[0.98] transition-all flex items-center justify-center gap-2 mt-4">
+                {authLoading ? <Loader2 className="animate-spin" /> : <>{authMode === 'signin' ? 'Enter LingoFlow' : 'Create & Enter'} <ArrowRight size={20} className="opacity-80" /></>}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Main App Views (Setup or Conversation)
+
+  if (store.status === AppStatus.CONFIG_ERROR && !conversationError) {
+     return (
+      <div className="h-screen flex flex-col items-center justify-center bg-red-50 p-8 text-center font-sans">
+        <div className="bg-white p-8 rounded-3xl shadow-xl max-w-lg w-full border border-red-100">
+           <AlertTriangle size={32} className="text-red-500 mx-auto mb-4" />
+           <h2 className="text-2xl font-black text-slate-800 mb-2">Supabase Setup Required</h2>
+           <p className="text-gray-600 mb-6">See previous instructions to fix API Key.</p>
+           <button onClick={() => window.location.reload()} className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl">Refresh</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (store.status === AppStatus.SETUP) {
+    return (
+      <div className="h-screen flex flex-col bg-hero p-6 max-w-md mx-auto items-center justify-center relative">
+        <div className="w-full max-w-sm">
+           <h2 className="text-3xl font-extrabold text-neutral-title mb-8 text-center">Pick a Topic</h2>
+           
+           <div className="mb-10 flex justify-center">
+             <div className="relative group cursor-pointer" onClick={() => setShowProgress(true)}>
+               <div className="w-32 h-32 bg-white rounded-full flex items-center justify-center shadow-glass border-4 border-white group-hover:scale-105 transition-transform">
+                 <span className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-br from-primary to-secondary">{store.user?.currentLevel}</span>
+               </div>
+               <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-neutral-title text-white px-3 py-1 rounded-full text-xs font-bold tracking-widest uppercase flex items-center gap-1">
+                  Level <BarChart3 size={10} className="opacity-70" />
+               </div>
+             </div>
+           </div>
+           
+           <div className="grid grid-cols-1 gap-4">
+               {['Travel & Tourism', 'Business English', 'Casual Conversation', 'Tech & Science'].map(topic => (
+                 <button key={topic} onClick={() => handleTopicSelect(topic)} className="p-5 rounded-2xl bg-white/70 backdrop-blur-sm border border-white hover:border-primary hover:shadow-glow-green text-left transition-all flex items-center justify-between group">
+                   <span className="font-bold text-neutral-title group-hover:text-primary transition-colors">{topic}</span>
+                   <div className="w-8 h-8 rounded-full bg-neutral-offWhite flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-colors">
+                     <ChevronRight size={18} />
+                   </div>
+                 </button>
+               ))}
+           </div>
+           
+           <div className="flex justify-center gap-4 mt-8">
+              <button onClick={() => setShowProfile(true)} className="flex items-center gap-2 text-neutral-light font-bold hover:text-neutral-title transition-colors text-sm">
+                  <User size={16} /> Edit Profile
+              </button>
+              <button onClick={() => setShowProgress(true)} className="flex items-center gap-2 text-neutral-light font-bold hover:text-primary transition-colors text-sm">
+                  <BarChart3 size={16} /> View Progress
+              </button>
+           </div>
+           
+           {showProfile && <ProfileSettings onClose={() => setShowProfile(false)} />}
+           {showProgress && <ProgressDashboard onClose={() => setShowProgress(false)} />}
+        </div>
+      </div>
+    );
+  }
+
+  const isLocked = store.status === AppStatus.DRILL_LOCKED;
 
   return (
-    <div className="flex flex-col h-screen bg-surface text-slate-800 overflow-hidden font-sans">
+    <div className="flex flex-col h-screen bg-hero text-neutral-body font-sans relative overflow-hidden">
       
-      {/* Header */}
-      <header className="h-16 bg-white/80 backdrop-blur-md border-b border-gray-100 flex items-center justify-between px-6 shrink-0 z-20">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-gradient-to-br from-primary to-primary-light rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-sm">
-            L
-          </div>
-          <h1 className="text-xl font-extrabold tracking-tight text-slate-700">Lingo<span className="text-primary">Flow</span></h1>
-        </div>
+      {/* 3D Human Avatar (Centered Top) */}
+      <div className="fixed top-20 left-1/2 -translate-x-1/2 w-32 h-32 z-0 opacity-10 pointer-events-none">
+         {/* Placeholder for 3D Illustration */}
+         <div className="w-full h-full rounded-full bg-gradient-to-b from-primary/20 to-secondary/20 blur-xl"></div>
+      </div>
 
+      {/* Glass Header */}
+      <header className="absolute top-0 left-0 right-0 h-20 px-6 flex items-center justify-between z-30">
+        
+        {/* Left: Back Button or Level Badge */}
+        <div className="flex items-center gap-3">
+          <button 
+             onClick={handleExitSession}
+             className="w-10 h-10 bg-white/80 backdrop-blur rounded-xl shadow-sm flex items-center justify-center text-neutral-light hover:text-primary transition-all border border-white hover:scale-105"
+             title="Back to Progress"
+          >
+             <LayoutDashboard size={20} />
+          </button>
+          <div className="w-10 h-10 bg-white/50 backdrop-blur rounded-xl shadow-sm flex items-center justify-center text-primary font-black text-lg border border-white/40">
+            {store.user?.currentLevel}
+          </div>
+        </div>
+        
+        {/* Right: Progress & Settings */}
         <div className="flex items-center gap-4">
-           <button 
-             onClick={togglePro}
-             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${user.isPro ? 'bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
-           >
-             <Crown size={14} className={user.isPro ? "fill-yellow-600 text-yellow-600" : ""} />
-             {user.isPro ? 'PRO ACTIVE' : 'UPGRADE'}
-           </button>
-           <button className="md:hidden">
-             <Menu size={24} className="text-slate-600"/>
-           </button>
+          <div className="w-32 hidden sm:block">
+            <ProgressBar current={store.user?.totalUniqueWords || 0} max={store.user?.wordsRequiredForNextLevel || 100} label="XP" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setShowProfile(true)} className="p-2.5 bg-white/50 hover:bg-white rounded-full text-neutral-light hover:text-neutral-title transition-all border border-transparent hover:border-white/60">
+              <User size={20} />
+            </button>
+            <button onClick={() => setShowSettings(true)} className="p-2.5 bg-white/50 hover:bg-white rounded-full text-neutral-light hover:text-neutral-title transition-all border border-transparent hover:border-white/60">
+              <Settings size={20} />
+            </button>
+          </div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden relative">
-        
-        {/* Sidebar (Desktop) */}
-        <aside className="hidden md:flex w-80 bg-white border-r border-gray-100 flex-col p-6 z-10">
-          <div className="mb-8">
-            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Your Progress</h2>
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-sm">
-               <div className="flex items-center justify-between mb-2">
-                 <span className="text-sm font-semibold text-slate-600">Level {user.level}</span>
-                 <span className="flex items-center gap-1 text-yellow-500 font-bold text-sm">
-                   <Trophy size={14} className="fill-current" />
-                   {user.xp} XP
-                 </span>
-               </div>
-               <ProgressBar current={user.xp % 100} max={100} />
-               <p className="text-xs text-gray-400 mt-2 text-center">{(100 - (user.xp % 100))} XP to Level {user.level + 1}</p>
-            </div>
-          </div>
+      {/* Messages Area (Scrollable) */}
+      <main className="flex-1 overflow-y-auto px-4 pt-24 pb-8 no-scrollbar z-10 relative">
+        <div className="flex flex-col justify-end min-h-full max-w-2xl mx-auto">
+           {store.messages.map((msg) => (
+             <ChatBubble key={msg.id} message={msg} />
+           ))}
+           <div ref={messagesEndRef} className="h-4" />
+        </div>
+      </main>
 
-          <div className="mb-8">
-             <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Daily Goals</h2>
-             <div className="space-y-3">
-               <div className="flex items-center justify-between p-3 rounded-xl bg-pink-50 border border-pink-100 text-pink-900">
-                 <div className="flex items-center gap-3">
-                   <Zap size={18} className="fill-pink-200 text-pink-500"/>
-                   <span className="text-sm font-semibold">Streak</span>
-                 </div>
-                 <span className="font-bold">{user.streak} Days</span>
-               </div>
-               <div className="flex items-center justify-between p-3 rounded-xl bg-green-50 border border-green-100 text-green-900">
-                 <div className="flex items-center gap-3">
-                   <div className="w-4 h-4 rounded-full border-2 border-green-500"></div>
-                   <span className="text-sm font-semibold">Messages</span>
-                 </div>
-                 <span className="font-bold">{user.dailyMessages}/{user.isPro ? '∞' : DAILY_LIMIT_FREE}</span>
-               </div>
-             </div>
+      {/* Drill Mode Overlay */}
+      {isLocked && (
+        <div className="absolute inset-x-0 bottom-[180px] z-30 flex justify-center px-4 animate-in slide-in-from-bottom-5 fade-in duration-300">
+          <div className="bg-red-500/90 backdrop-blur text-white p-4 rounded-2xl shadow-xl flex items-center gap-3 max-w-xs w-full border border-red-400">
+            <div className="p-2 bg-white/20 rounded-full shrink-0"><Lock size={20} /></div>
+            <div className="flex-1"><p className="font-bold text-sm">Strict Mode</p><p className="text-xs text-white/90">Perfect pronunciation required.</p></div>
           </div>
-        </aside>
+        </div>
+      )}
 
-        {/* Chat Area */}
-        <main className="flex-1 flex flex-col relative max-w-4xl mx-auto w-full">
-          
-          {/* Messages Scroll Area */}
-          <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 no-scrollbar">
-            <div className="flex flex-col justify-end min-h-full pb-4">
-               {messages.map((msg) => (
-                 <ChatBubble key={msg.id} message={msg} />
-               ))}
-               
-               {status === GameStatus.PROCESSING && (
-                 <div className="flex items-center gap-2 text-gray-400 text-sm ml-4 animate-pulse">
-                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                   <span>Lingo is thinking...</span>
-                 </div>
-               )}
-               <div ref={messagesEndRef} />
-            </div>
-          </div>
-
-          {/* Controls Area */}
-          <div className="h-40 shrink-0 bg-gradient-to-t from-surface via-surface to-transparent flex flex-col items-center justify-center pb-6 z-10">
-            <MicrophoneButton 
-              status={status} 
-              onClick={startListening} 
-              disabled={!user.isPro && user.dailyMessages >= DAILY_LIMIT_FREE} 
-            />
-            
-            {!user.isPro && user.dailyMessages >= DAILY_LIMIT_FREE && (
-              <p className="text-red-500 text-sm font-semibold mt-4 bg-white/80 px-4 py-1 rounded-full shadow-sm">
-                Daily limit reached. Come back tomorrow!
-              </p>
-            )}
-             {!user.isPro && user.dailyMessages < DAILY_LIMIT_FREE && (
-               <p className="text-gray-400 text-xs mt-4 font-medium">
-                 {remainingMessages} free messages left today
-               </p>
-             )}
-          </div>
-
-        </main>
+      {/* Footer / The Voice Orb */}
+      <div className="shrink-0 z-40 bg-white/30 backdrop-blur-lg border-t border-white/40 pb-safe-area">
+        <div className="max-w-md mx-auto">
+          <VoiceVisualizer 
+            status={store.status} 
+            isLocked={isLocked}
+            isSessionActive={isSessionActive}
+            onToggleSession={toggleSession}
+            transcript={transcript}
+            error={conversationError}
+          />
+        </div>
       </div>
+
+      {/* Modals */}
+      {showSettings && <VoiceSettings onClose={() => setShowSettings(false)} />}
+      {showProfile && <ProfileSettings onClose={() => setShowProfile(false)} />}
+      {showProgress && <ProgressDashboard onClose={() => setShowProgress(false)} />}
     </div>
   );
 };
