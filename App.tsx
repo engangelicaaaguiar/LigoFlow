@@ -9,7 +9,7 @@ import { VoiceSettings } from './components/VoiceSettings';
 import { ProfileSettings } from './components/ProfileSettings';
 import { ProgressDashboard } from './components/ProgressDashboard';
 import { LandingPage } from './components/LandingPage';
-import { Trophy, Lock, ChevronLeft, AlertTriangle, Mail, Key, Loader2, ArrowRight, Settings, User, LayoutDashboard, ChevronRight, BarChart3 } from 'lucide-react';
+import { Trophy, Lock, ChevronLeft, AlertTriangle, Mail, Key, Loader2, ArrowRight, Settings, User, LayoutDashboard, ChevronRight, BarChart3, Home } from 'lucide-react';
 import { supabase, signInWithEmail, signUpWithEmail } from './services/supabase';
 import { useConversation } from './hooks/useConversation';
 
@@ -289,15 +289,24 @@ const App: React.FC = () => {
       {/* Glass Header */}
       <header className="absolute top-0 left-0 right-0 h-20 px-6 flex items-center justify-between z-30">
         
-        {/* Left: Back Button or Level Badge */}
+        {/* Left: Home + Progress */}
         <div className="flex items-center gap-3">
           <button 
              onClick={handleExitSession}
-             className="w-10 h-10 bg-white/80 backdrop-blur rounded-xl shadow-sm flex items-center justify-center text-neutral-light hover:text-primary transition-all border border-white hover:scale-105"
-             title="Back to Progress"
+             className="w-10 h-10 bg-white/50 hover:bg-white/80 backdrop-blur rounded-xl shadow-sm flex items-center justify-center text-neutral-light hover:text-red-500 transition-all border border-white/40"
+             title="End Session & Back to Topics"
+          >
+             <Home size={20} />
+          </button>
+          
+          <button 
+             onClick={() => setShowProgress(true)}
+             className="w-10 h-10 bg-white/80 backdrop-blur rounded-xl shadow-sm flex items-center justify-center text-primary font-bold transition-all border border-white hover:scale-105 hover:shadow-glow-green"
+             title="View Progress Dashboard"
           >
              <LayoutDashboard size={20} />
           </button>
+
           <div className="w-10 h-10 bg-white/50 backdrop-blur rounded-xl shadow-sm flex items-center justify-center text-primary font-black text-lg border border-white/40">
             {store.user?.currentLevel}
           </div>
